@@ -1,26 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readDB, writeDB } from '../../../lib/db';
+import { supabase } from '../../../lib/supabase';
 
 export async function GET(request: NextRequest) {
   try {
-    const db = await readDB();
-
     // Buscar todas as inscrições com nome do usuário
-    const results = db.inscricoes.map(inscricao => {
-      const usuario = db.usuarios.find(u => u.id === inscricao.usuario_id);
-      return {
-        ...inscricao,
-        usuario_nome: usuario ? usuario.nome : 'Usuário não encontrado'
-      };
-    }).sort((a, b) => {
-      // Ordenar por turno_id e depois por nome de usuário
-      if (a.turno_id === b.turno_id) {
-        return a.usuario_nome.localeCompare(b.usuario_nome);
-      }
-      return a.turno_id - b.turno_id;
-    });
-
-    return NextResponse.json(results);
+    const { data: inscricoes, error } = await supabase
+      .from('inscricoes')
+      .select(`
+        *,
+        usuarios (id, nome)
+      `);
+    
+    if (error) throw error;
+    
+    // Formatar os dados para o formato esperado pelo frontend
+    const formattedInscricoes = inscricoes.map(inscricao => ({
+      id: inscricao.id,
+      turno_id: inscricao.turno_id,
+      usuario_id: inscricao.usuario_id,
+      created_at: inscricao.created_at,
+      usuario_nome: inscricao.usuarios ? inscricao.usuarios.nome : 'Usuário não encontrado'
+    }));
+    
+    return NextResponse.json(formattedInscricoes);
   } catch (error) {
     console.error('Erro ao buscar inscrições:', error);
     return NextResponse.json(
@@ -32,7 +34,6 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const db = await readDB();
     const body = await request.json();
 
     // Validar dados recebidos
@@ -46,7 +47,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Verificar se o turno existe e tem vagas disponíveis
-    const turno = db.turnos.find(t => t.id === turno_id);
+    const { data: turno, error: errorTurno } = await supabase
+      .from('turnos')
+      .select('*')
+      .eq('id', turno_id)
+      .maybeSingle();
+    
+    if (errorTurno) throw errorTurno;
+    
     if (!turno) {
       return NextResponse.json(
         { message: 'Turno não encontrado' },
@@ -62,7 +70,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Verificar se o usuário existe
-    const usuario = db.usuarios.find(u => u.id === usuario_id);
+    const { data: usuario, error: errorUsuario } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('id', usuario_id)
+      .maybeSingle();
+    
+    if (errorUsuario) throw errorUsuario;
+    
     if (!usuario) {
       return NextResponse.json(
         { message: 'Usuário não encontrado' },
@@ -71,10 +86,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Verificar se o usuário já está inscrito neste turno
-    const inscricaoExistente = db.inscricoes.find(
-      i => i.turno_id === turno_id && i.usuario_id === usuario_id
-    );
-
+    const { data: inscricaoExistente, error: errorInscricao } = await supabase
+      .from('inscricoes')
+      .select('*')
+      .eq('turno_id', turno_id)
+      .eq('usuario_id', usuario_id)
+      .maybeSingle();
+    
+    if (errorInscricao) throw errorInscricao;
+    
     if (inscricaoExistente) {
       return NextResponse.json(
         { message: 'Usuário já inscrito neste turno' },
@@ -82,27 +102,41 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Gerar ID para a nova inscrição
-    const novoId = db.inscricoes.length > 0 
-      ? Math.max(...db.inscricoes.map(i => i.id)) + 1 
-      : 1;
+    // Iniciar uma transação para garantir consistência dos dados
+    // Como o Supabase não suporta transações diretamente via API, vamos fazer manualmente
 
-    // Criar nova inscrição
-    const novaInscricao = {
-      id: novoId,
-      turno_id,
-      usuario_id,
-      created_at: new Date().toISOString()
-    };
+    // 1. Criar nova inscrição
+    const { data: novaInscricao, error: errorNovaInscricao } = await supabase
+      .from('inscricoes')
+      .insert([
+        {
+          turno_id,
+          usuario_id
+        }
+      ])
+      .select()
+      .single();
+    
+    if (errorNovaInscricao) throw errorNovaInscricao;
 
-    // Atualizar vagas restantes no turno
-    const turnoIndex = db.turnos.findIndex(t => t.id === turno_id);
-    db.turnos[turnoIndex].vagas_restantes -= 1;
-    db.turnos[turnoIndex].updated_at = new Date().toISOString();
-
-    // Adicionar inscrição ao banco de dados
-    db.inscricoes.push(novaInscricao);
-    await writeDB(db);
+    // 2. Atualizar vagas restantes no turno
+    const { error: errorUpdateTurno } = await supabase
+      .from('turnos')
+      .update({
+        vagas_restantes: turno.vagas_restantes - 1,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', turno_id);
+    
+    if (errorUpdateTurno) {
+      // Se houver erro ao atualizar o turno, tentar remover a inscrição
+      await supabase
+        .from('inscricoes')
+        .delete()
+        .eq('id', novaInscricao.id);
+      
+      throw errorUpdateTurno;
+    }
 
     return NextResponse.json(
       { message: 'Inscrição realizada com sucesso' },

@@ -1,21 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readDB, writeDB } from '../../../lib/db';
+import { supabase } from '../../../lib/supabase';
 
 export async function GET(request: NextRequest) {
   try {
-    const db = await readDB();
-
     // Buscar todos os turnos ordenados por data e horário
-    const results = db.turnos.sort((a, b) => {
-      // Ordenar por data primeiro
-      if (a.data !== b.data) {
-        return a.data.localeCompare(b.data);
-      }
-      // Se a data for a mesma, ordenar por horário
-      return a.horario.localeCompare(b.horario);
-    });
-
-    return NextResponse.json(results);
+    const { data: turnos, error } = await supabase
+      .from('turnos')
+      .select('*')
+      .order('data')
+      .order('horario');
+    
+    if (error) throw error;
+    
+    return NextResponse.json(turnos);
   } catch (error) {
     console.error('Erro ao buscar turnos:', error);
     return NextResponse.json(
@@ -27,7 +24,6 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const db = await readDB();
     const body = await request.json();
 
     // Validar dados recebidos
@@ -57,10 +53,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Verificar se o turno já existe
-    const turnoExistente = db.turnos.find(
-      turno => turno.data === data && turno.horario === horario
-    );
-
+    const { data: turnoExistente, error: errorCheck } = await supabase
+      .from('turnos')
+      .select('*')
+      .eq('data', data)
+      .eq('horario', horario)
+      .maybeSingle();
+    
+    if (errorCheck) throw errorCheck;
+    
     if (turnoExistente) {
       return NextResponse.json(
         { message: 'Turno já cadastrado para esta data e horário' },
@@ -68,28 +69,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Gerar ID para o novo turno
-    const novoId = db.turnos.length > 0 
-      ? Math.max(...db.turnos.map(t => t.id)) + 1 
-      : 1;
-
     // Criar novo turno
-    const novoTurno = {
-      id: novoId,
-      data,
-      horario,
-      vagas_totais: Number(vagas_totais),
-      vagas_restantes: Number(vagas_totais),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-
-    // Adicionar turno ao banco de dados
-    db.turnos.push(novoTurno);
-    await writeDB(db);
+    const { data: novoTurno, error } = await supabase
+      .from('turnos')
+      .insert([
+        {
+          data,
+          horario,
+          vagas_totais: Number(vagas_totais),
+          vagas_restantes: Number(vagas_totais)
+        }
+      ])
+      .select()
+      .single();
+    
+    if (error) throw error;
 
     return NextResponse.json(
-      { message: 'Turno adicionado com sucesso' },
+      { message: 'Turno adicionado com sucesso', turno: novoTurno },
       { status: 201 }
     );
   } catch (error) {

@@ -1,26 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readDB, writeDB } from '../../../../lib/db';
+import { supabase } from '../../../../lib/supabase';
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const db = await readDB();
     const id = parseInt(params.id);
 
-    // Verificar se o turno existe
-    const turnoIndex = db.turnos.findIndex(turno => turno.id === id);
-    if (turnoIndex === -1) {
-      return NextResponse.json(
-        { message: 'Turno não encontrado' },
-        { status: 404 }
-      );
-    }
-
     // Verificar se há inscrições para este turno
-    const inscricoesParaTurno = db.inscricoes.filter(inscricao => inscricao.turno_id === id);
-    if (inscricoesParaTurno.length > 0) {
+    const { data: inscricoes, error: errorInscricoes } = await supabase
+      .from('inscricoes')
+      .select('*')
+      .eq('turno_id', id);
+    
+    if (errorInscricoes) throw errorInscricoes;
+    
+    if (inscricoes && inscricoes.length > 0) {
       return NextResponse.json(
         { message: 'Não é possível excluir um turno com inscrições' },
         { status: 400 }
@@ -28,8 +24,12 @@ export async function DELETE(
     }
 
     // Excluir o turno
-    db.turnos.splice(turnoIndex, 1);
-    await writeDB(db);
+    const { error } = await supabase
+      .from('turnos')
+      .delete()
+      .eq('id', id);
+    
+    if (error) throw error;
 
     return NextResponse.json(
       { message: 'Turno excluído com sucesso' },

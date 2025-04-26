@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readDB } from '../../../lib/db';
+import { supabase } from '../../../lib/supabase';
 
 export async function GET(request: NextRequest) {
   try {
-    const db = await readDB();
-
     // Buscar todos os usuários ordenados por nome
-    const results = db.usuarios.sort((a, b) => a.nome.localeCompare(b.nome));
-
-    return NextResponse.json(results);
+    const { data: usuarios, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .order('nome');
+    
+    if (error) throw error;
+    
+    return NextResponse.json(usuarios);
   } catch (error) {
     console.error('Erro ao buscar usuários:', error);
     return NextResponse.json(
