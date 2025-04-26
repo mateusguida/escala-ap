@@ -1,27 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
-
-// Simulação de banco de dados usando arquivo JSON para desenvolvimento local
-const DB_FILE = path.join(process.cwd(), 'db.json');
-
-// Função para ler o banco de dados
-async function readDB() {
-  try {
-    const data = await fs.readFile(DB_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    // Se o arquivo não existir, criar um banco de dados vazio
-    const initialDB = { turnos: [], usuarios: [], inscricoes: [] };
-    await fs.writeFile(DB_FILE, JSON.stringify(initialDB, null, 2));
-    return initialDB;
-  }
-}
-
-// Função para salvar no banco de dados
-async function writeDB(data: any) {
-  await fs.writeFile(DB_FILE, JSON.stringify(data, null, 2));
-}
+import { readDB, writeDB } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -29,11 +7,12 @@ export async function GET(request: NextRequest) {
 
     // Buscar todos os turnos ordenados por data e horário
     const results = db.turnos.sort((a, b) => {
-      // Ordenar por data e depois por horário
-      if (a.data === b.data) {
-        return a.horario.localeCompare(b.horario);
+      // Ordenar por data primeiro
+      if (a.data !== b.data) {
+        return a.data.localeCompare(b.data);
       }
-      return a.data.localeCompare(b.data);
+      // Se a data for a mesma, ordenar por horário
+      return a.horario.localeCompare(b.horario);
     });
 
     return NextResponse.json(results);
