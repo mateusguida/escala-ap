@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readDB, writeDB } from '@/lib/db';
+import { readDB, writeDB } from '../../../../lib/db';
 
 export async function DELETE(
   request: NextRequest,
